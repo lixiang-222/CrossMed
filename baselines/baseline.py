@@ -65,7 +65,6 @@ class Transformer(nn.Module):
         # obtain y_true, loss, y_prob
         return logits
 
-
 class GRU(nn.Module):
     def __init__(
             self,
@@ -144,6 +143,166 @@ class GRU(nn.Module):
         logits = self.fc(patient_emb).squeeze(dim=1)
         # obtain y_true, loss, y_prob
         return logits
+
+
+
+class MLP(nn.Module):
+    def __init__(
+            self,
+            Tokenizers_visit_event,
+            Tokenizers_monitor_event,
+            output_size,
+            device,
+            embedding_dim=128,
+            dropout=0.7
+    ):
+        super(MLP, self).__init__()
+        self.embedding_dim = embedding_dim
+        self.visit_event_token = Tokenizers_visit_event
+        self.monitor_event_token = Tokenizers_monitor_event
+
+        self.feature_visit_evnet_keys = Tokenizers_visit_event.keys()
+        self.feature_monitor_event_keys = Tokenizers_monitor_event.keys()
+        self.dropout = torch.nn.Dropout(p=dropout)
+
+        self.device = device
+
+        self.embeddings = nn.ModuleDict()
+        # 为每种event（包含monitor和visit）添加一种嵌入
+        for feature_key in self.feature_visit_evnet_keys:
+            tokenizer = self.visit_event_token[feature_key]
+            self.embeddings[feature_key] = nn.Embedding(
+                tokenizer.get_vocabulary_size(),
+                self.embedding_dim,
+                padding_idx=tokenizer.get_padding_index(),
+            )
+
+        for feature_key in self.feature_monitor_event_keys:
+            tokenizer = self.monitor_event_token[feature_key]
+            self.embeddings[feature_key] = nn.Embedding(
+                tokenizer.get_vocabulary_size(),
+                self.embedding_dim,
+                padding_idx=tokenizer.get_padding_index(),
+            )
+
+        # 移除 GRU，改用 MLP 或直接聚合
+        self.visit_mlp = nn.ModuleDict()
+        for feature_key in self.feature_visit_evnet_keys:
+            self.visit_mlp[feature_key] = nn.Sequential(
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+
+        for feature_key in self.feature_monitor_event_keys:
+            self.visit_mlp[feature_key] = nn.Sequential(
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+
+        for feature_key in ['weight', 'age']:
+            self.visit_mlp[feature_key] = nn.Sequential(
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+
+        self.monitor_mlp = nn.ModuleDict()
+        for feature_key in self.feature_monitor_event_keys:
+            self.monitor_mlp[feature_key] = nn.Sequential(
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+
+        self.fc_age = nn.Linear(1, self.embedding_dim)
+        self.fc_weight = nn.Linear(1, self.embedding_dim)
+
+        item_num = int(len(Tokenizers_monitor_event.keys()) / 2) + 3 + 2
+        self.fc_patient = nn.Sequential(
+            torch.nn.ReLU(),
+            nn.Linear(item_num * self.embedding_dim, output_size)
+        )
+
+    def forward(self, batch_data):
+        batch_size = len(batch_data['visit_id'])
+        patient_emb_list = []
+
+        """处理 lab, inj（monitor_event）"""
+        feature_paris = list(zip(*[iter(self.feature_monitor_event_keys)] * 2))
+        for feature_key1, feature_key2 in feature_paris:
+            monitor_emb_list = []
+            for patient in range(batch_size):
+                x1 = self.monitor_event_token[feature_key1].batch_encode_3d(
+                    batch_data[feature_key1][patient], max_length=(400, 1024)
+                )
+                x1 = torch.tensor(x1, dtype=torch.long, device=self.device)
+                x2 = self.monitor_event_token[feature_key2].batch_encode_3d(
+                    batch_data[feature_key2][patient], max_length=(400, 1024)
+                )
+                x2 = torch.tensor(x2, dtype=torch.long, device=self.device)
+
+                x1 = self.dropout(self.embeddings[feature_key1](x1))
+                x2 = self.dropout(self.embeddings[feature_key2](x2))
+
+                x = torch.mul(x1, x2)  # (visit, monitor, event, embedding_dim)
+                x = torch.sum(x, dim=2)  # (visit, monitor, embedding_dim)
+
+                # 直接对 monitor 维度求和（或平均）
+                x = torch.sum(x, dim=1)  # (visit, embedding_dim)
+                x = self.monitor_mlp[feature_key1](x)  # (visit, embedding_dim)
+
+                monitor_emb_list.append(x.unsqueeze(0))  # (1, visit, embedding_dim)
+
+            # 聚合所有病人的 visit 数据
+            aggregated_visit_tensor = torch.cat(monitor_emb_list, dim=0)  # (batch, visit, embedding_dim)
+            
+            # 直接对 visit 维度求和（或平均）
+            patient_emb = torch.sum(aggregated_visit_tensor, dim=1)  # (batch, embedding_dim)
+            patient_emb_list.append(patient_emb)
+
+        """处理 cond, proc, drug（visit_event）"""
+        for feature_key in self.feature_visit_evnet_keys:
+            x = self.visit_event_token[feature_key].batch_encode_3d(batch_data[feature_key])
+            x = torch.tensor(x, dtype=torch.long, device=self.device)
+            x = self.dropout(self.embeddings[feature_key](x))  # (patient, visit, event, embedding_dim)
+            x = torch.sum(x, dim=2)  # (patient, visit, embedding_dim)
+
+            # 直接对 visit 维度求和（或平均）
+            patient_emb = torch.sum(x, dim=1)  # (patient, embedding_dim)
+            patient_emb = self.visit_mlp[feature_key](patient_emb)  # (patient, embedding_dim)
+            patient_emb_list.append(patient_emb)
+
+        """处理 weight, age"""
+        for feature_key in ['weight', 'age']:
+            x = batch_data[feature_key]
+            max_length = max(len(sublist) for sublist in x)
+            x = [[float(item) for item in sublist] + [0] * (max_length - len(sublist)) for sublist in x]
+            x = torch.tensor(x, dtype=torch.float, device=self.device)  # (patient, visit)
+
+            num_patients, num_visits = x.shape
+            x = x.view(-1, 1)  # (patient * visit, 1)
+            mask = (x == 0)
+
+            if feature_key == 'weight':
+                x = self.dropout(self.fc_weight(x))
+            elif feature_key == 'age':
+                x = self.dropout(self.fc_age(x))
+            x = x * (~mask)  # (patient * visit, embedding_dim)
+            x = x.view(num_patients, num_visits, -1)  # (patient, visit, embedding_dim)
+
+            # 直接对 visit 维度求和（或平均）
+            patient_emb = torch.sum(x, dim=1)  # (patient, embedding_dim)
+            patient_emb = self.visit_mlp[feature_key](patient_emb)  # (patient, embedding_dim)
+            patient_emb_list.append(patient_emb)
+
+        """拼接所有特征"""
+        patient_emb = torch.cat(patient_emb_list, dim=-1)  # (patient, item_num * embedding_dim)
+        logits = self.fc_patient(patient_emb)  # (patient, output_size)
+        return logits
+
+
 
 
 class RETAIN(nn.Module):
