@@ -40,7 +40,7 @@ def convert_to_relative_time(datetime_strings):
 
 
 def parse_datetimes(datetime_strings):
-    print(datetime_strings)
+    
     return [datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S") for dt_str in datetime_strings]
 
 

@@ -13,6 +13,9 @@ from tqdm.autonotebook import trange
 
 from baselines.multilabel import multilabel_metrics_fn
 from pyhealth.utils import create_directory
+import random
+from torch.utils.data import DataLoader, Subset
+from utils import get_sample_loader
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +220,7 @@ class Trainer:
             # log and save
             logger.info(f"--- Train epoch-{epoch}, step-{global_step} ---")
             logger.info(f"loss: {sum(training_loss) / len(training_loss):.4f}")
+            # print(f"loss: {sum(training_loss) / len(training_loss):.4f}")
             if self.exp_path is not None:
                 self.save_ckpt(os.path.join(self.exp_path, "last.ckpt"))
 
@@ -227,10 +231,15 @@ class Trainer:
                 for key in scores.keys():
                     if key != "visit_level" and key != "code_level":
                         # print(scores[key])
-                        logger.info("{}: {:.4f}".format(key, scores[key]))
+                        logger.info("{}: {}".format(key, scores[key]))
                     else:
                         logger.info("{}: {}".format(key, scores[key]))
                 # save best model
+                print(f'F1: {scores["f1_samples"]:.4f}, '
+                  f'Jaccard: {scores["jaccard_samples"]:.4f}, '
+                  f'ROC-AUC: {scores["roc_auc_samples"]:.4f}, '
+                  f'PR-AUC: {scores["pr_auc_samples"]:.4f}, '
+                  )
                 if monitor is not None:
                     score = scores[monitor]
                     if is_best(best_score, score, monitor_criterion):
@@ -249,16 +258,41 @@ class Trainer:
             self.load_ckpt(os.path.join(self.exp_path, "best.ckpt"))
 
         # test
-        if test_dataloader is not None:
-            scores = self.evaluate(test_dataloader)
-            logger.info(f"--- Test ---")
-            for key in scores.keys():
-                if key != "visit_level" and key != "code_level":
-                    logger.info("{}: {:.4f}".format(key, scores[key]))
-                else:
-                    logger.info("{}: {}".format(key, scores[key]))
+        # if test_dataloader is not None:
+        #     scores = self.evaluate(test_dataloader)
+        #     logger.info(f"--- Test ---")
+        #     for key in scores.keys():
+        #         if key != "visit_level" and key != "code_level":
+        #             logger.info("{}: {}".format(key, scores[key]))
+        #         else:
+        #             logger.info("{}: {}".format(key, scores[key]))
 
-        return
+        # return
+
+        if test_dataloader is not None:
+            test_epochs = 10
+            sample_size = 0.8
+            results = []
+            logger.info(f"--- Test ---")
+            for epoch in range(test_epochs):
+                print(f'\nTesting Epoch {epoch + 1}/{test_epochs}')
+                sample_loader = get_sample_loader(test_dataloader, sample_size)
+                scores = self.evaluate(sample_loader)
+                print(f'F1: {scores["f1_samples"]:.4f}, '
+                  f'Jaccard: {scores["jaccard_samples"]:.4f}, '
+                  f'ROC-AUC: {scores["roc_auc_samples"]:.4f}, '
+                  f'PR-AUC: {scores["pr_auc_samples"]:.4f}, '
+                  )
+                results.append([scores["f1_samples"], scores["jaccard_samples"], scores["roc_auc_samples"], scores["pr_auc_samples"]])
+                logger.info(f"\nTesting Epoch {epoch + 1}/{test_epochs}")
+                for key in scores.keys():
+                    if key != "visit_level" and key != "code_level":
+                        logger.info("{}: {}".format(key, scores[key]))
+                    else:
+                        logger.info("{}: {}".format(key, scores[key]))
+
+        return results
+
 
     def inference(self, dataloader, additional_outputs=None,
                   return_patient_ids=False) -> Dict[str, float]:

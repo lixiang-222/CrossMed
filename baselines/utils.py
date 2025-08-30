@@ -45,6 +45,18 @@ def prepare_labels(
     return labels
 
 
+def get_sample_loader(data_loader, sample_size):
+    sample_size = round(len(data_loader.dataset) * sample_size)
+    dataset = data_loader.dataset
+    dataset_size = len(dataset)
+    indices = list(range(dataset_size))
+    random.shuffle(indices)  # 随机打乱索引
+    sample_indices = indices[:sample_size]  # 取前 sample_size 个索引
+    subset = Subset(dataset, sample_indices)
+    sample_loader = DataLoader(subset, batch_size=data_loader.batch_size, shuffle=True,
+                            collate_fn=data_loader.collate_fn)
+    return sample_loader
+
 # def get_init_tokenizers(task_dataset, keys=['drugs_hist', 'procedures', 'drugs']):
 #     Tokenizers = {key: Tokenizer(tokens=task_dataset.get_all_tokens(key), special_tokens=["<pad>"]) for key in keys}
 #     return Tokenizers

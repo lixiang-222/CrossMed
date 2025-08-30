@@ -20,8 +20,19 @@ def batch_to_multihot(label, num_labels: int) -> torch.tensor:
         multihot[i, l] = 1
     return multihot
 
+def log_params(dataset, args, log_path):
+    argsDict = args.__dict__
+    with open(log_path, 'w') as log_file:
+        log_file.write(f'parameter of dataset:\n')
+        log_file.write(f'{dataset} \n')
+        log_file.write('--------------------------------------\n')
+        log_file.write(f'args params:\n')
+        for eachArg, value in argsDict.items():
+            log_file.writelines(eachArg + ' : ' + str(value) + '\n')
+        log_file.write('--------------------------------------\n')
 
-def log_results(epoch, train_loss, val_loss, metrics, log_path):
+
+def log_results(epoch, run_time, train_loss, val_loss, metrics, log_path):
     with open(log_path, 'a') as log_file:
         log_file.write(f'Epoch {epoch + 1}\n')
         log_file.write(f'Train Loss: {train_loss:.4f}\n')
@@ -29,7 +40,15 @@ def log_results(epoch, train_loss, val_loss, metrics, log_path):
         log_file.write(f'F1: {metrics["f1"]:.4f}, '
                        f'Jaccard: {metrics["jaccard"]:.4f}, '
                        f'ROC-AUC: {metrics["roc_auc"]:.4f}, '
-                       f'PR-AUC: {metrics["pr_auc"]:.4f}\n')
+                       f'PR-AUC: {metrics["pr_auc"]:.4f}, '
+                       f'Run_Time: {run_time:.3f}\n')
+        if (epoch + 1) % 20 == 0:
+            log_file.write(f'{epoch + 1} epoch Model saved !!!\n')
+        log_file.write('--------------------------------------\n')
+
+def log_outmemory(data, error_log, log_path):
+    with open(log_path, 'a') as log_file:
+        log_file.write(f'{error_log}\n')
         log_file.write('--------------------------------------\n')
 
 
@@ -114,6 +133,17 @@ def plot_losses(epoch_list, train_losses, val_losses, png_path):
     plt.title('Training and Validation Loss over Epochs')
     plt.legend()
     plt.grid(True)
+
+    # 使用 numpy 找到 val_losses 的最小值及其索引
+    min_val_loss_idx = np.argmin(val_losses)
+    min_val_loss = val_losses[min_val_loss_idx]
+    min_epoch = epoch_list[min_val_loss_idx]
+    
+    # 标注 val_losses 的最低点
+    plt.scatter(min_epoch, min_val_loss, color='red', zorder=5)  # 使用红色点标注最低点
+    plt.text(min_epoch, min_val_loss, f'Min Val Loss\n({min_epoch:.0f}, {min_val_loss:.4f})', 
+             horizontalalignment='right', verticalalignment='bottom', fontsize=9, color='red')
+
     # 设置纵坐标范围
     plt.autoscale(True)
     # 保存绘图
@@ -183,7 +213,7 @@ def print_dataset_parameters(task_dataset, Tokenizers_visit_event, Tokenizers_mo
     if args.task == 'drug_rec':
         cond_num = len(Tokenizers_visit_event['conditions'].vocabulary)
         drug_num = label_size
-    elif args.task == 'diag_pred':
+    else:  # args.task == 'diag_pred'
         cond_num = label_size
         drug_num = len(Tokenizers_visit_event['drugs'].vocabulary)
     proc_num = len(Tokenizers_visit_event['procedures'].vocabulary)
@@ -193,24 +223,46 @@ def print_dataset_parameters(task_dataset, Tokenizers_visit_event, Tokenizers_mo
     cond = 0
     proc = 0
     drug = 0
+    max_cond = 0
+    max_proc = 0
+    max_drug = 0
+    max_visit = 0
     for visit in task_dataset.samples:
         if args.task == 'drug_rec':
             cond += len(visit['conditions'][-1])
             proc += len(visit['procedures'][-1])
             drug += len(visit['drugs'])
+            if len(visit['conditions'][-1]) > max_cond:
+                max_cond = len(visit['conditions'][-1])
+            if len(visit['procedures'][-1]) > max_proc:
+                max_proc = len(visit['procedures'][-1])
+            if len(visit['drugs']) > max_drug:
+                max_drug = len(visit['drugs'])
+            if len(visit['conditions']) > max_visit:
+                max_visit = len(visit['conditions'])
         elif args.task == 'diag_pred':
             cond += len(visit['conditions'])
             proc += len(visit['procedures'][-1])
             drug += len(visit['drugs'][-1])
+            if len(visit['conditions'][-1]) > max_cond:
+                max_cond = len(visit['conditions'][-1])
+            if len(visit['procedures'][-1]) > max_proc:
+                max_proc = len(visit['procedures'][-1])
+            if len(visit['drugs']) > max_drug:
+                max_drug = len(visit['drugs'])
+            if len(visit['conditions']) > max_visit:
+                max_visit = len(visit['conditions'])
+
     avg_visit = visit_num / patient_num
     avg_cond = cond / visit_num
     avg_proc = proc / visit_num
     avg_drug = drug / visit_num
 
     output = 'patient_num: {}\nvisit_num: {}\ncond_num: {}\ndrug_num: {}\nproc_num: {}\nlab_num: {}\ninj_num:{} ' \
-             '\navg_visit: {}\navg_cond: {}\navg_proc: {}\navg_drug: {}'.format(
+             '\navg_visit: {}\navg_cond: {}\navg_proc: {}\navg_drug: {}\nmax_cond:{}\nmax_proc:{}\nmax_drug:{}' \
+             '\nmax_visit: {}'.format(
         patient_num, visit_num, cond_num, drug_num, proc_num, lab_num, inj_num, avg_visit, avg_cond, avg_proc,
-        avg_drug)
+        avg_drug,max_cond,max_proc,max_drug, max_visit)
     return output
 
 
