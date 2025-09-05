@@ -19,16 +19,15 @@ The official implementation of `CrossMed` for clinical prediction tasks, includi
     - `raw_data/`: Original dataset files (need to download separately)
     - `processed_data/`: Preprocessed data files
 
-- `baselines/`
-  - `CrossMed/`: Main experimental code
-    - `main_.py`: Training and evaluation script
-    - `Task.py`: Data processing and task definition
-    - `trainer.py`: Training utilities
-    - `preprocess/`: Data preprocessing scripts
-    - `models/`: Model implementations
+- `CrossMed/`: Main model code
+  - `main_.py`: Training and evaluation script
+  - `Task.py`: Data processing and task definition
+  - `trainer.py`: Training utilities
+  - `preprocess/`: Data preprocessing scripts
+  - `models/`: Model implementations
 
 - `output/`: Model checkpoints and results
-- `run_all.ipynb`: Jupyter notebook for experiments
+- `run.ipynb`: Jupyter notebook for experiments
 
 ## 🚀 2. Preliminary
 
@@ -53,18 +52,18 @@ scikit-learn == 1.3.0
 
 3. **⚙️ Process the data**:
    ```bash
-   python baselines/CrossMed/preprocess/drug_recommendation_mimic34_fn.py
-   python baselines/CrossMed/preprocess/diag_prediction_mimic34_fn.py
+   python CrossMed/preprocess/drug_recommendation_mimic34_fn.py
+   python CrossMed/preprocess/diag_prediction_mimic34_fn.py
    ```
 
 ### 2.3 🎯 Run the Code
 
 ```bash
-# 🚀 Quick start CrossMed
-python baselines/CrossMed/main_.py --dataset mimic3 --task drug_rec --epochs 50
+# 🚀 Quick start [Python]
+python CrossMed/main_.py --dataset mimic3 --task drug_rec --epochs 50
 
-# 📓 baselines
-jupyter notebook run_all.ipynb
+# 🚀 Quick start [Jupyter]
+jupyter notebook run.ipynb
 ```
 
 ## 📚 Citation & Acknowledgement
